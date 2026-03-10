@@ -62,14 +62,16 @@ class Config:
     REPORT_AGENT_MAX_TOOL_CALLS = int(os.environ.get('REPORT_AGENT_MAX_TOOL_CALLS', '5'))
     REPORT_AGENT_MAX_REFLECTION_ROUNDS = int(os.environ.get('REPORT_AGENT_MAX_REFLECTION_ROUNDS', '2'))
     REPORT_AGENT_TEMPERATURE = float(os.environ.get('REPORT_AGENT_TEMPERATURE', '0.5'))
+
+    # 市场模拟配置
+    MARKET_DEFAULT_AGENT_COUNT = int(os.environ.get('MARKET_DEFAULT_AGENT_COUNT', '1000'))
+    MARKET_MIN_AGENT_COUNT = int(os.environ.get('MARKET_MIN_AGENT_COUNT', '500'))
+    MARKET_MAX_AGENT_COUNT = int(os.environ.get('MARKET_MAX_AGENT_COUNT', '2000'))
     
     @classmethod
     def validate(cls):
-        """验证必要配置"""
-        errors = []
-        if not cls.LLM_API_KEY:
-            errors.append("LLM_API_KEY 未配置")
-        if not cls.ZEP_API_KEY:
-            errors.append("ZEP_API_KEY 未配置")
-        return errors
-
+        """
+        市场模式允许无 LLM / 无 Zep 启动。
+        缺少密钥时，相关能力会在运行时自动回退。
+        """
+        return []
