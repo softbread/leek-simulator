@@ -1,0 +1,22 @@
+{
+  "market_scenario": {
+    "ticker": "SH600519",
+    "stock_name": "贵州茅台",
+    "sector_name": "白酒",
+    "starting_price": 1400,
+    "float_shares_band": "large",
+    "market_regime": "neutral",
+    "horizon_days": 1,
+    "agent_count": 500,
+    "seed": 42
+  },
+  "time_config": { "minutes_per_round": 5 },
+  "agent_configs": [
+    { "agent_id": 1, "activity_level": 0.3, "influence_weight": 1.5 }
+  ],
+  "seed_inputs": {
+    "news_items": [],
+    "sentiment_signals": [],
+    "upload_texts": []
+  }
+}

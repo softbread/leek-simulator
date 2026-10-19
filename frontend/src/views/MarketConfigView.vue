@@ -3,7 +3,7 @@
     <header class="page-header">
       <div>
         <div class="eyebrow">Step 2</div>
-        <h1>市场环境与人群初始化</h1>
+        <h1>{{ run.scenario.market === 'us_equity' ? '美股' : 'A股' }}环境与人群初始化</h1>
       </div>
       <button class="back-btn" @click="router.push('/')">返回场景创建</button>
     </header>
@@ -38,7 +38,7 @@
           </button>
         </div>
 
-        <div class="xueqiu-auth-card">
+        <div v-if="run.scenario.market !== 'us_equity'" class="xueqiu-auth-card">
           <div class="xueqiu-auth-copy">
             <strong>雪球登录状态</strong>
             <span>
@@ -52,13 +52,18 @@
             <button class="back-btn danger" :disabled="authLoading || !xueqiuStatus.authenticated" @click="handleLogout">清除登录态</button>
           </div>
         </div>
+        <div v-else class="empty-card">美股使用独立的 CNBC / X / Reddit / 导入新闻与讨论源。基本面已在选股阶段完成，本轮不再建模。</div>
 
-        <div v-if="run.preparation_summary?.source_health" class="source-health">
+        <div v-if="run.scenario.market !== 'us_equity' && run.preparation_summary?.source_health" class="source-health">
           <span>东方财富资讯: {{ run.preparation_summary.source_health.eastmoney_news_count }}</span>
           <span>雪球模式: {{ run.preparation_summary.source_health.xueqiu_mode }}</span>
           <span>雪球认证: {{ run.preparation_summary.source_health.xueqiu_authenticated ? 'yes' : 'no' }}</span>
         </div>
+        <div v-if="worldState.source_health?.providers" class="source-health">
+          <span v-for="(status, source) in worldState.source_health.providers" :key="source">{{ source }}: {{ status }}</span>
+        </div>
 
+        <CurrentSentimentCard :snapshot="worldState.current_sentiment" />
         <div v-if="worldState.world_summary?.top_narrative" class="world-card">
           <div class="world-copy">
             <strong>{{ worldState.world_summary.top_narrative }}</strong>
@@ -95,7 +100,7 @@
             <p>{{ item.summary }}</p>
           </article>
         </div>
-        <div v-else class="empty-card">准备后会展示东方财富资讯和雪球情绪窗口。</div>
+        <div v-else class="empty-card">准备后会展示所选市场的资讯和情绪输入。</div>
       </div>
 
       <div class="panel">
@@ -135,7 +140,7 @@
             </div>
           </div>
         </div>
-        <div v-else class="empty-card">准备后会显示 500-2000 个代理人的默认 A 股结构分布。</div>
+        <div v-else class="empty-card">准备后会显示 500-2000 个模拟交易者的策略分布。</div>
       </div>
     </section>
 
@@ -150,6 +155,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import CurrentSentimentCard from '../components/CurrentSentimentCard.vue'
 import {
   buildMarketWorld,
   completeXueqiuAuth,
@@ -210,7 +216,7 @@ const handlePrepare = async () => {
   try {
     const response = await prepareMarketRun(route.params.runId)
     run.value = response.data
-    await loadAuthStatus()
+    if (run.value?.scenario.market !== 'us_equity') await loadAuthStatus()
   } finally {
     preparing.value = false
   }
@@ -266,7 +272,8 @@ const goToSimulation = () => {
 }
 
 onMounted(async () => {
-  await Promise.all([loadRun(), loadAuthStatus()])
+  await loadRun()
+  if (run.value?.scenario.market !== 'us_equity') await loadAuthStatus()
 })
 </script>
 

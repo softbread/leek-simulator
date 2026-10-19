@@ -16,13 +16,29 @@
     </section>
 
     <section class="chart-grid">
+      <CurrentSentimentCard :snapshot="results.current_sentiment" />
+      <MarketLineChart v-if="results.current_sentiment?.recent_prices?.length" title="输入的历史行情（观测）" :points="results.current_sentiment.recent_prices" metric-key="close" color="#64726a" />
       <MarketLineChart title="Price Path" :points="results.series" metric-key="price" color="#0f766e" />
-      <MarketLineChart title="Sentiment" :points="results.series" metric-key="market_sentiment" color="#ea580c" />
-      <MarketLineChart title="Xueqiu Buzz" :points="results.series" metric-key="xueqiu_buzz" color="#b45309" />
+      <MarketLineChart title="未来情绪（模拟）" :points="results.series" metric-key="market_sentiment" color="#ea580c" />
+      <MarketLineChart title="讨论热度衰减（模拟）" :points="results.series" metric-key="xueqiu_buzz" color="#b45309" />
       <MarketLineChart title="Volume" :points="results.series" metric-key="volume" color="#1d4ed8" />
+      <MarketLineChart v-if="results.world_timeline?.length" title="群体信念" :points="results.world_timeline" metric-key="public_belief" color="#0f766e" />
+      <MarketLineChart v-if="results.world_timeline?.length" title="市场反馈" :points="results.world_timeline" metric-key="feedback" color="#b45309" />
+      <MarketLineChart v-if="results.world_timeline?.length" title="大盘情绪（独立来源模拟）" :points="results.world_timeline" metric-key="market_sentiment" color="#476b8f" />
+      <MarketLineChart v-if="results.world_timeline?.length" title="个股情绪（含群体反馈）" :points="results.world_timeline" metric-key="stock_sentiment" color="#b45309" />
+      <MarketLineChart v-if="results.world_timeline?.length" title="模拟可用买入资金比例" :points="results.world_timeline" metric-key="buying_capacity" color="#0f766e" />
+      <MarketLineChart v-if="results.world_timeline?.length" title="模拟亏钱效应" :points="results.world_timeline" metric-key="loss_effect" color="#a43b31" />
     </section>
 
     <section class="results-grid">
+      <article v-if="results.cycle_summary" class="panel">
+        <h2>情绪周期（状态推断）</h2>
+        <p>大盘：{{ results.cycle_summary.market?.label || '证据不足' }}。个股阶段与大盘分别计算。</p>
+        <div v-for="(count, phase) in results.cycle_summary.stock_phase_counts" :key="phase" class="population-item">
+          <span>{{ phaseLabels[phase] || phase }}</span><strong>{{ count }} ticks</strong>
+        </div>
+        <p>阶段不是未来涨跌承诺；资金、持仓、盈亏及参与度会改变后续行为。</p>
+      </article>
       <article class="panel narrative">
         <div class="panel-header">
           <div>
@@ -111,6 +127,26 @@
           </button>
         </div>
       </article>
+
+      <article class="panel">
+        <h2>代理人记忆</h2>
+        <p>查看代表性交易者的信念与历次决策。</p>
+        <select v-model="selectedAgentId" @change="loadAgent">
+          <option value="">选择交易者</option>
+          <option v-for="agent in inspectableAgents" :key="agent.agent_id" :value="agent.agent_id">
+            #{{ agent.agent_id }} {{ agent.archetype }}
+          </option>
+        </select>
+        <p v-if="agentError">{{ agentError }}</p>
+        <div v-if="selectedAgent" class="event-list">
+          <p>信念 {{ selectedAgent.memory.belief.toFixed(3) }} / 经验 {{ selectedAgent.memory.experience.toFixed(3) }}</p>
+          <div v-for="episode in selectedAgent.memory.episodes" :key="episode.tick_index" class="event-item">
+            <strong>T{{ episode.tick_index }} · {{ episode.action }} {{ episode.signed_quantity }}</strong>
+            <span>{{ episode.narrative }}</span>
+            <small>价格 {{ episode.price }} / 信念 {{ episode.belief }}</small>
+          </div>
+        </div>
+      </article>
     </section>
   </div>
 </template>
@@ -119,7 +155,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MarketLineChart from '../components/MarketLineChart.vue'
-import { chatWithMarketAnalyst, getMarketRun, getMarketRunResults } from '../api/market'
+import CurrentSentimentCard from '../components/CurrentSentimentCard.vue'
+import { chatWithMarketAnalyst, getMarketAgent, getMarketRun, getMarketRunResults } from '../api/market'
 
 const route = useRoute()
 const router = useRouter()
@@ -130,6 +167,31 @@ const results = ref(null)
 const question = ref('')
 const chatting = ref(false)
 const chatLog = ref([])
+const phaseLabels = { rising: '涨潮期', top_consolidation: '顶部震荡期', falling: '退潮期', bottom_consolidation: '底部震荡期', undetermined: '证据不足' }
+const selectedAgentId = ref('')
+const selectedAgent = ref(null)
+const agentError = ref('')
+const inspectableAgents = computed(() => {
+  const agents = new Map()
+  for (const tick of results.value?.series || []) {
+    for (const action of tick.top_actions || []) {
+      if (action.agent_id > 0) agents.set(action.agent_id, action)
+    }
+  }
+  return [...agents.values()].sort((a, b) => a.agent_id - b.agent_id)
+})
+const loadAgent = async () => {
+  const agentId = selectedAgentId.value
+  selectedAgent.value = null
+  agentError.value = ''
+  if (!agentId) return
+  try {
+    const response = await getMarketAgent(runId, agentId)
+    if (selectedAgentId.value === agentId) selectedAgent.value = response.data
+  } catch (error) {
+    if (selectedAgentId.value === agentId) agentError.value = error.message || '读取记忆失败'
+  }
+}
 
 const metricCards = computed(() => {
   const metrics = results.value?.metrics || {}

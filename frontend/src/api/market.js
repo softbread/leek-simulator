@@ -1,5 +1,7 @@
 import service from './index'
 
+export const getMarketProfiles = async () => service.get('/api/market/profiles')
+
 export const uploadMarketDocuments = async (files) => {
   const form = new FormData()
   files.forEach((file) => form.append('files', file))
@@ -54,6 +56,10 @@ export const getMarketRunStatus = async (runId) => {
 
 export const getMarketRunResults = async (runId) => {
   return service.get(`/api/market/runs/${runId}/results`)
+}
+
+export const getMarketAgent = async (runId, agentId) => {
+  return service.get(`/api/market/runs/${runId}/agents/${agentId}`)
 }
 
 export const chatWithMarketAnalyst = async (runId, message) => {

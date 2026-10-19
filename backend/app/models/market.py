@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
+from market_sim.types import MarketScenario
 
 from ..config import Config
 from ..utils.file_parser import FileParser
@@ -54,55 +55,6 @@ class MarketUpload:
             size=data["size"],
             extracted_text=data.get("extracted_text", ""),
             uploaded_at=data.get("uploaded_at", datetime.now().isoformat()),
-        )
-
-
-@dataclass
-class MarketScenario:
-    ticker: str
-    stock_name: str
-    sector_name: str
-    starting_price: float
-    float_shares_band: str
-    market_regime: str
-    horizon_days: int
-    agent_count: int = 1000
-    optional_upload_ids: List[str] = field(default_factory=list)
-    trader_mix_overrides: Dict[str, float] = field(default_factory=dict)
-    notes: str = ""
-    seed: Optional[int] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "ticker": self.ticker,
-            "stock_name": self.stock_name,
-            "sector_name": self.sector_name,
-            "starting_price": self.starting_price,
-            "float_shares_band": self.float_shares_band,
-            "market_regime": self.market_regime,
-            "horizon_days": self.horizon_days,
-            "agent_count": self.agent_count,
-            "optional_upload_ids": self.optional_upload_ids,
-            "trader_mix_overrides": self.trader_mix_overrides,
-            "notes": self.notes,
-            "seed": self.seed,
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "MarketScenario":
-        return cls(
-            ticker=data["ticker"],
-            stock_name=data["stock_name"],
-            sector_name=data["sector_name"],
-            starting_price=float(data["starting_price"]),
-            float_shares_band=data["float_shares_band"],
-            market_regime=data["market_regime"],
-            horizon_days=int(data["horizon_days"]),
-            agent_count=int(data.get("agent_count", 1000)),
-            optional_upload_ids=data.get("optional_upload_ids", []),
-            trader_mix_overrides=data.get("trader_mix_overrides", {}),
-            notes=data.get("notes", ""),
-            seed=data.get("seed"),
         )
 
 

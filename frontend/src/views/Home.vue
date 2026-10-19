@@ -2,10 +2,10 @@
   <div class="market-home">
     <section class="hero">
       <div class="hero-copy">
-        <div class="eyebrow">A-SHARE CROWD LAB</div>
-        <h1>把通用群体推演，收敛成一套真正可跑的 A 股情绪与交易仿真。</h1>
+        <div class="eyebrow">MARKET CROWD LAB</div>
+        <h1>A股与美股，独立市场环境下的群体情绪推演。</h1>
         <p>
-          输入股票、板块、市场环境和代理人数量，系统会接入东方财富资讯与雪球情绪信号，
+          输入已筛选的股票、板块、市场环境和代理人数量，选择对应市场的新闻与社交来源，
           先构建一个由新闻、讨论和价格带驱动的平行市场 world_state，再让 500-2000 名代理人在 5 分钟 tick 上共同演化价格、成交与情绪。
         </p>
       </div>
@@ -33,19 +33,30 @@
 
         <div class="grid">
           <label class="field">
+            <span>市场业务模块</span>
+            <select v-model="form.market" @change="changeMarket">
+              <option value="cn_equity">A股</option>
+              <option value="us_equity">US Equities（已做基本面筛选）</option>
+            </select>
+          </label>
+          <label class="field">
             <span>股票代码</span>
-            <input v-model="form.ticker" placeholder="600519 / SH600519" />
+            <input v-model="form.ticker" :placeholder="form.market === 'us_equity' ? 'NVDA / AAPL' : '600519 / SH600519'" />
           </label>
           <label class="field">
             <span>股票名称</span>
-            <input v-model="form.stock_name" placeholder="贵州茅台" />
+            <input v-model="form.stock_name" :placeholder="form.market === 'us_equity' ? 'NVIDIA' : '贵州茅台'" />
           </label>
           <label class="field">
             <span>行业/板块</span>
-            <input v-model="form.sector_name" placeholder="白酒 / 食品饮料" />
+            <input v-model="form.sector_name" :placeholder="form.market === 'us_equity' ? 'semiconductors' : '白酒 / 食品饮料'" />
           </label>
           <label class="field">
-            <span>初始价格</span>
+            <span>大盘情绪检索词（独立于个股）</span>
+            <input v-model="form.market_keyword" :placeholder="form.market === 'us_equity' ? 'S&P 500' : 'A股 / 沪深300'" />
+          </label>
+          <label class="field">
+            <span>初始价格（{{ form.market === 'us_equity' ? 'USD' : 'CNY' }}）</span>
             <input v-model.number="form.starting_price" type="number" min="0.1" step="0.01" />
           </label>
           <label class="field">
@@ -76,9 +87,40 @@
           </label>
         </div>
 
+        <template v-if="form.market === 'us_equity'">
+          <p>只模拟新闻、社交情绪和交易反馈；不再进行基本面打分。使用纽约时间，完整常规交易日为 78 个 tick。</p>
+          <label class="field">
+            <span>数据模式</span>
+            <select v-model="form.data_mode">
+              <option value="import_only">仅导入数据（可复现，无网络请求）</option>
+              <option value="live_and_imported">实时 + 导入（CNBC / 已配置的 X、Reddit、授权新闻源）</option>
+            </select>
+          </label>
+          <label class="field textarea">
+            <span>美股新闻与社交种子（JSON 对象）</span>
+            <textarea v-model="usSeedsText" rows="7" placeholder='{"news_items":[],"social_posts":[{"source":"reddit","scope":"ticker","text":"$NVDA bullish breakout","published_at":"2026-10-19T10:00:00-04:00"}]}' />
+            <small>Bloomberg、Robinhood Social 可通过导入接入。请填写原始发布时间；不会绕过付费或登录限制。</small>
+          </label>
+        </template>
+
+        <label class="field textarea">
+          <span>行情快照时间（可选；留空为构建世界时）</span>
+          <input v-model="snapshotTime" placeholder="2026-10-19T15:00:00+08:00" />
+        </label>
+        <label class="field textarea">
+          <span>近期行情（可选，JSON 数组）</span>
+          <textarea v-model="recentPricesText" rows="5" placeholder='[{"timestamp":"2026-10-19T14:55:00+08:00","close":100,"volume":12000}]' />
+          <small>按时间递增；价格使用所选市场货币，成交量单位股。建议时间带时区；行情用于起点动量。</small>
+        </label>
+
         <label class="field textarea">
           <span>补充说明</span>
           <textarea v-model="form.notes" rows="5" placeholder="例如：市场对消费修复预期升温，但担心高估值兑现压力。" />
+        </label>
+        <label class="field textarea">
+          <span>大盘宽度数据（可选，JSON 数组；不使用个股数据代替）</span>
+          <textarea v-model="marketBreadthText" rows="4" placeholder='[{"timestamp":"2026-10-19T15:00:00+08:00","advancers":3000,"decliners":1800,"limit_up":70,"limit_down":10,"promotion_rate":0.55,"source":"你的复盘数据源"}]' />
+          <small>用于大盘周期候选判断。美股使用上涨/下跌家数；A股另使用涨跌停数和可选晋级率。请使用同一股票池。</small>
         </label>
 
         <div class="mix-section">
@@ -151,7 +193,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { createMarketRun, listMarketRuns, uploadMarketDocuments } from '../api/market'
+import { createMarketRun, getMarketProfiles, listMarketRuns, uploadMarketDocuments } from '../api/market'
 
 const router = useRouter()
 const fileInput = ref(null)
@@ -159,6 +201,11 @@ const files = ref([])
 const recentRuns = ref([])
 const submitting = ref(false)
 const error = ref('')
+const snapshotTime = ref('')
+const recentPricesText = ref('')
+const marketBreadthText = ref('')
+const usSeedsText = ref('')
+const marketProfiles = ref([])
 
 const defaultMix = {
   fomo_momentum: 30,
@@ -169,9 +216,12 @@ const defaultMix = {
 }
 
 const form = ref({
+  market: 'cn_equity',
+  data_mode: 'live_and_imported',
   ticker: '600519',
   stock_name: '贵州茅台',
   sector_name: '白酒',
+  market_keyword: 'A股',
   starting_price: 1397,
   float_shares_band: 'mega',
   market_regime: 'volatile',
@@ -181,13 +231,30 @@ const form = ref({
   trader_mix_overrides: { ...defaultMix }
 })
 
-const mixCards = [
+const cnMixCards = [
   { key: 'fomo_momentum', label: 'FOMO / 动量' },
   { key: 'macro_news', label: '宏观新闻追逐' },
   { key: 'fundamental', label: '基本面交易' },
   { key: 'mean_reversion', label: '均值回归' },
   { key: 'passive_retail', label: '低频散户' }
 ]
+const mixCards = computed(() => form.value.market === 'us_equity'
+  ? cnMixCards.filter(item => item.key !== 'fundamental').concat([{ key: 'social_contrarian', label: '社交逆向交易' }])
+  : cnMixCards)
+
+const changeMarket = () => {
+  form.value.ticker = ''
+  form.value.stock_name = ''
+  form.value.sector_name = ''
+  form.value.starting_price = 0
+  form.value.market_keyword = form.value.market === 'us_equity' ? 'S&P 500' : 'A股'
+  form.value.data_mode = form.value.market === 'us_equity' ? 'import_only' : 'live_and_imported'
+  snapshotTime.value = ''
+  recentPricesText.value = ''
+  marketBreadthText.value = ''
+  files.value = []
+  resetMix()
+}
 
 const canSubmit = computed(() => {
   return form.value.ticker && form.value.stock_name && form.value.sector_name && form.value.starting_price > 0
@@ -202,7 +269,9 @@ const handleFileChange = (event) => {
 }
 
 const resetMix = () => {
-  form.value.trader_mix_overrides = { ...defaultMix }
+  const weights = marketProfiles.value.find(item => item.market === form.value.market)?.archetypes
+  form.value.trader_mix_overrides = weights ? Object.fromEntries(Object.entries(weights).map(([key, value]) => [key, Math.round(value * 100)]))
+    : form.value.market === 'us_equity' ? { fomo_momentum: 40, macro_news: 20, social_contrarian: 15, mean_reversion: 15, passive_retail: 10 } : { ...defaultMix }
 }
 
 const loadRuns = async () => {
@@ -230,6 +299,15 @@ const handleCreateRun = async () => {
   submitting.value = true
   error.value = ''
   try {
+    const recentPrices = recentPricesText.value.trim() ? JSON.parse(recentPricesText.value) : []
+    if (!Array.isArray(recentPrices)) throw new Error('近期行情必须是 JSON 数组')
+    const marketSnapshot = { recent_prices: recentPrices }
+    if (marketBreadthText.value.trim()) {
+      const breadth = JSON.parse(marketBreadthText.value)
+      if (!Array.isArray(breadth)) throw new Error('大盘宽度数据必须是 JSON 数组')
+      marketSnapshot.market_breadth = breadth
+    }
+    if (snapshotTime.value.trim()) marketSnapshot.as_of = snapshotTime.value.trim()
     let optionalUploadIds = []
     if (files.value.length) {
       const uploadResponse = await uploadMarketDocuments(files.value)
@@ -238,6 +316,8 @@ const handleCreateRun = async () => {
 
     const response = await createMarketRun({
       ...form.value,
+      seed_inputs: form.value.market === 'us_equity' && usSeedsText.value.trim() ? JSON.parse(usSeedsText.value) : {},
+      market_snapshot: marketSnapshot,
       optional_upload_ids: optionalUploadIds
     })
     router.push({ name: 'MarketConfig', params: { runId: response.data.run_id } })
@@ -248,7 +328,13 @@ const handleCreateRun = async () => {
   }
 }
 
-onMounted(loadRuns)
+onMounted(async () => {
+  await loadRuns()
+  try {
+    const response = await getMarketProfiles()
+    marketProfiles.value = response.data
+  } catch (error) { console.warn('market profiles unavailable', error) }
+})
 </script>
 
 <style scoped>

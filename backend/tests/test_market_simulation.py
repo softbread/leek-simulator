@@ -1,5 +1,6 @@
 import json
 import time
+from datetime import datetime, timezone
 
 import pytest
 
@@ -12,8 +13,10 @@ from app.services.market_simulation import (
     PriceImpactEngine,
     SentimentSignal,
     WorldStateBuilder,
+    ShockBuilder,
     XueqiuSentimentAdapter,
 )
+from app.services.market_world import MarketWorldRuntime
 
 
 class FakeHttpResponse:
@@ -126,6 +129,41 @@ def test_price_impact_engine_is_deterministic():
 
     assert ticks_one[-1].price == ticks_two[-1].price
     assert ticks_one[-1].volume == ticks_two[-1].volume
+    assert engine_one.world.timeline == engine_two.world.timeline
+    assert engine_one.world.agent_states() == engine_two.world.agent_states()
+    assert sum(tick.active_agents for tick in ticks_one) == len(engine_one.world.ledger)
+
+
+def test_peer_observations_use_previous_round_and_influence():
+    scenario = MarketScenario("600519", "stock", "sector", 100, "mid", "neutral", 1, seed=3)
+    agents = PopulationBuilder.build_population(scenario)[:3]
+    world = MarketWorldRuntime(agents, {}, 3)
+    observer = agents[0]
+    world.following[observer.agent_id] = [agents[1].agent_id, agents[2].agent_id]
+    context = {"policy_pressure": 0, "retail_herding": 0, "tape_momentum_bias": 0,
+               "dominant_narrative": "test"}
+    assert world.observe(observer, context, 0, 0, 0)["observed_peers"] == 0
+    actions = [{"agent_id": agent.agent_id, "action": "hold", "signed_quantity": 0,
+                "decision_context": {"belief": belief}}
+               for agent, belief in zip(agents[1:], [0.8, -0.2])]
+    world.commit(0, 100, 0.01, actions, context)
+    observed = world.observe(observer, context, 0, 0, 0)
+    expected = (0.8 * agents[1].influence_weight - 0.2 * agents[2].influence_weight) / (agents[1].influence_weight + agents[2].influence_weight)
+    assert observed["peer_signal"] == pytest.approx(expected)
+    assert observed["belief"] != 0
+    assert world.memories[agents[1].agent_id]["episodes"][0]["tick_index"] == 0
+    assert world.feedback != 0
+    assert world.context(context)["retail_herding"] != 0
+
+
+def test_seed_news_is_not_replayed_as_future_positive_news():
+    scenario = MarketScenario("600519", "stock", "sector", 100, "mid", "neutral", 1)
+    news = [NewsItem("test", "2026-01-01", "neutral", "", 0, 0.8, "ticker", ""),
+            NewsItem("test", "2026-01-01", "negative", "", -0.5, 0.8, "ticker", "")]
+    shocks = ShockBuilder.build(scenario, news, [])
+    assert all(shock.start_tick == 0 for shock in shocks)
+    assert shocks[0].direction == 0
+    assert shocks[1].direction < 0
 
 
 def test_world_state_changes_agent_path():
@@ -214,8 +252,19 @@ def test_xueqiu_adapter_prefers_browser_session(monkeypatch):
     assert signals[0].buzz_score > 0
 
 
+def test_missing_xueqiu_produces_one_labelled_proxy_not_future_windows(monkeypatch):
+    monkeypatch.setattr("app.services.market_simulation.XueqiuBrowserAuthService.is_authenticated", lambda: False)
+    scenario = MarketScenario("600519", "stock", "sector", 100, "mid", "neutral", 5)
+    signals = XueqiuSentimentAdapter().fetch_signals(scenario, [])
+    assert len(signals) == 1
+    assert signals[0].source == "news_proxy"
+    assert signals[0].metadata["mode"] == "fallback"
+    assert signals[0].buzz_score == 0
+
+
 @pytest.fixture()
-def app_client(monkeypatch):
+def app_client(monkeypatch, tmp_path):
+    monkeypatch.setattr(MarketRunManager, "RUNS_DIR", str(tmp_path / "runs"))
     monkeypatch.setattr("app.services.market_simulation.time.sleep", lambda *_args, **_kwargs: None)
 
     def fake_fetch_news(self, keyword, affected_scope, limit=6):
@@ -223,7 +272,7 @@ def app_client(monkeypatch):
         return [
             NewsItem(
                 source="eastmoney",
-                published_at="2026-03-10 09:30:00",
+                published_at=datetime.now(timezone.utc).isoformat(),
                 title=f"{keyword} 新闻脉冲",
                 summary=f"{keyword} 出现正向催化。",
                 sentiment=sentiment,
@@ -300,6 +349,7 @@ def test_market_api_flow(app_client):
     prepared_context = prepare_response.get_json()["data"]["prepared_context"]
     assert prepared_context["source_health"]["eastmoney_news_count"] >= 2
     assert prepared_context["world_state"]["world_summary"]["top_narrative"]
+    assert MarketRunManager.read_json(run_id, "sentiment_snapshot.json")["as_of"]
 
     start_response = app_client.post(f"/api/market/runs/{run_id}/start")
     assert start_response.status_code == 200
@@ -321,7 +371,20 @@ def test_market_api_flow(app_client):
     results_payload = results_response.get_json()["data"]
     assert results_payload["metrics"]["ending_price"] > 0
     assert results_payload["xueqiu_summary"]["average_buzz"] > 0
+    assert results_payload["current_sentiment"]["as_of"]
+    assert len(results_payload["world_timeline"]) == 48
+    assert results_payload["metrics"]["starting_price"] == 1400
+    timeline = app_client.get(f"/api/market/runs/{run_id}/timeline").get_json()["data"]
+    assert len(timeline) == 48
+    agent = app_client.get(f"/api/market/runs/{run_id}/agents/1").get_json()["data"]
+    assert agent["memory"]["observations"] > 0
+    assert agent["memory"]["episodes"]
+    assert app_client.post(f"/api/market/runs/{run_id}/start").get_json()["data"]["status"] == "completed"
 
     chat_response = app_client.post(f"/api/market/runs/{run_id}/chat", json={"message": "这轮走势是谁主导的？"})
     assert chat_response.status_code == 200
     assert chat_response.get_json()["data"]["answer"]
+    assert app_client.post(f"/api/market/runs/{run_id}/build-world").status_code == 200
+    assert MarketRunManager.read_json(run_id, "prepared_context.json") is None
+    assert MarketRunManager.read_json(run_id, "results.json") is None
+    assert app_client.post(f"/api/market/runs/{run_id}/start").status_code == 400

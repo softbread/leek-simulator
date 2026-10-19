@@ -3,15 +3,18 @@ A股市场仿真 API
 """
 
 import os
+import math
+import re
 import traceback
 from flask import jsonify, request
 
 from . import market_bp
 from ..config import Config
 from ..models.market import MarketRunManager, MarketScenario, MarketUploadManager
-from ..services.market_simulation import MarketSimulationService
+from ..services.market.runs import MarketSimulationService
 from ..services.xueqiu_browser import XueqiuBrowserAuthService
 from ..utils.logger import get_logger
+from markets import PROFILES, get_profile
 
 logger = get_logger("mirofish.api.market")
 
@@ -24,6 +27,8 @@ def allowed_file(filename: str) -> bool:
 
 
 def _parse_scenario(payload):
+    market = payload.get("market", "cn_equity")
+    profile = get_profile(market)
     ticker = payload.get("ticker", "").strip().upper()
     stock_name = payload.get("stock_name", "").strip()
     sector_name = payload.get("sector_name", "").strip()
@@ -39,7 +44,7 @@ def _parse_scenario(payload):
 
     if not ticker or not stock_name or not sector_name:
         raise ValueError("ticker、stock_name、sector_name 为必填字段")
-    if starting_price <= 0:
+    if not math.isfinite(starting_price) or starting_price <= 0:
         raise ValueError("starting_price 必须大于 0")
     if float_shares_band not in {"small", "mid", "large", "mega"}:
         raise ValueError("float_shares_band 必须是 small / mid / large / mega")
@@ -51,6 +56,8 @@ def _parse_scenario(payload):
         raise ValueError("agent_count 必须在 500 到 2000 之间")
     if seed is not None:
         seed = int(seed)
+    if market == "us_equity" and not re.fullmatch(r"[A-Z][A-Z0-9]*(?:[.-][A-Z0-9]+)?", ticker):
+        raise ValueError("US ticker must be a symbol such as NVDA or BRK.B")
 
     return MarketScenario(
         ticker=ticker,
@@ -65,7 +72,17 @@ def _parse_scenario(payload):
         trader_mix_overrides=trader_mix_overrides,
         notes=notes,
         seed=seed,
+        market_snapshot=payload.get("market_snapshot", {}),
+        market_keyword=payload.get("market_keyword", profile.default_keyword).strip() or profile.default_keyword,
+        market=market,
+        seed_inputs=payload.get("seed_inputs", {}),
+        data_mode=payload.get("data_mode", "live_and_imported"),
     )
+
+
+@market_bp.route("/profiles", methods=["GET"])
+def get_market_profiles():
+    return jsonify({"success": True, "data": [profile.public() for profile in PROFILES.values()]})
 
 
 @market_bp.route("/uploads", methods=["POST"])
@@ -283,3 +300,19 @@ def chat_market_run(run_id: str):
             "error": str(exc),
             "traceback": traceback.format_exc(),
         }), 500
+
+
+@market_bp.route("/runs/<run_id>/timeline", methods=["GET"])
+def get_market_timeline(run_id: str):
+    if not MarketRunManager.get_run(run_id):
+        return jsonify({"success": False, "error": "市场仿真不存在"}), 404
+    return jsonify({"success": True, "data": MarketRunManager.read_json(run_id, "world_timeline.json", [])})
+
+
+@market_bp.route("/runs/<run_id>/agents/<int:agent_id>", methods=["GET"])
+def get_market_agent(run_id: str, agent_id: int):
+    agents = MarketRunManager.read_json(run_id, "agent_states.json", [])
+    agent = next((item for item in agents if item["profile"]["agent_id"] == agent_id), None)
+    if not agent:
+        return jsonify({"success": False, "error": "代理人记忆尚未生成或不存在"}), 404
+    return jsonify({"success": True, "data": agent})

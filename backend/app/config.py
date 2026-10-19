@@ -67,6 +67,11 @@ class Config:
     MARKET_DEFAULT_AGENT_COUNT = int(os.environ.get('MARKET_DEFAULT_AGENT_COUNT', '1000'))
     MARKET_MIN_AGENT_COUNT = int(os.environ.get('MARKET_MIN_AGENT_COUNT', '500'))
     MARKET_MAX_AGENT_COUNT = int(os.environ.get('MARKET_MAX_AGENT_COUNT', '2000'))
+    US_X_BEARER_TOKEN = os.environ.get('US_X_BEARER_TOKEN', '')
+    US_REDDIT_ACCESS_TOKEN = os.environ.get('US_REDDIT_ACCESS_TOKEN', '')
+    US_REDDIT_USER_AGENT = os.environ.get('US_REDDIT_USER_AGENT', 'LeekSimulator/0.1 (market research)')
+    US_NEWS_FEED_URL = os.environ.get('US_NEWS_FEED_URL', '')
+    US_NEWS_FEED_TOKEN = os.environ.get('US_NEWS_FEED_TOKEN', '')
     
     @classmethod
     def validate(cls):

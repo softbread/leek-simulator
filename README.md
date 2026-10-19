@@ -1,6 +1,14 @@
 # Leek Simulator
 
-面向 A 股场景的多智能体市场推演系统。
+面向 A股与美股场景的多智能体市场推演系统。
+
+现支持独立的美股业务模块：选择 **US Equities**，用已完成基本面筛选的股票进行社交情绪和交易模拟。
+参见 [美股设置指南](docs/us-equity-setup.md)；A股默认配置继续保留。
+
+开始使用单只股票前，请阅读 [股票输入与情绪快照设置指南](docs/share-setup-guide.md)。
+它说明每只股票需要哪些数据、如何登录雪球采集当前情绪，以及如何区分起点观测与后续模拟。
+大盘、个股和板块情绪分别接入与展示；新闻默认从原始发布时间起 72 小时衰减到零，再通过交易行为传导到价格。
+可选输入大盘涨跌家数、涨跌停数与晋级率；周期、资金容量与盈亏反馈的实现见 [情绪周期模型](docs/sentiment-cycle-model.md)。
 
 此项目借用了MiroFish关于“通用图谱/舆情推演”的代码，切换为“单股票 + 板块上下文”的 A 股仿真产品：输入股票、板块、市场环境和代理人数，系统会构造 500-2000 名带不同年龄、风险偏好、财富阶段和交易策略的代理人，并输出价格路径、成交、情绪、关键事件和分析师解读。
 
@@ -30,20 +38,27 @@
 
 ## 当前工作流
 
+上游对照与适配范围见 [MiroFish 代码对照](docs/mirofish-upstream.md)。
+
 1. 创建市场场景
    - 填写 ticker、股票名、板块、初始价格、市场环境、交易日天数、代理人数
    - 可选上传研究报告/公告摘要/纪要作为额外输入
 2. 初始化市场环境
    - 抓取东方财富资讯
    - 连接雪球登录态并抓取讨论情绪
-   - 生成代理人群体画像和 market shock
+   - 构建并保存 world_state，再生成代理人群体画像和 market shock
 3. 运行仿真
    - 以 5 分钟 tick 离散推进
    - 聚合代理人的 buy / sell / hold 行为，映射为价格影响
+   - 代理人记住决策与持仓体验，观察上一轮同伴信念，群体反馈推动世界状态演化
 4. 查看结果
    - 图表、关键事件、群体构成、Narrative Report 和 Analyst Chat
+   - 群体信念与市场反馈时间线，以及代表性代理人的记忆
 
 ## 技术实现
+
+仿真核心已拆为独立的 `backend/market_sim` 包，支持 MiroFish 配置适配、逐轮运行和可替换的交易者策略。
+模块边界和接入示例见 [市场环境架构](docs/market-architecture.md)。
 
 ### 后端
 
@@ -65,7 +80,11 @@
 - `backend/app/api/market.py`
   - 市场仿真 API
 - `backend/app/services/market_simulation.py`
-  - 东方财富 / 雪球数据归一化、代理人生成、仿真引擎、报告与问答
+  - 兼容旧导入路径
+- `backend/market_sim/`
+  - 世界、代理人、记忆、价格引擎与 MiroFish 适配器，不依赖 Web 框架
+- `backend/app/services/market/`
+  - 数据抓取、运行持久化、分析师与问答
 - `backend/app/services/xueqiu_browser.py`
   - 雪球登录浏览器与 headless 抓取会话
 - `backend/app/models/market.py`
@@ -176,11 +195,14 @@ npm run dev
 
 ### 准备与运行
 
+- `POST /api/market/runs/:run_id/build-world`
 - `POST /api/market/runs/:run_id/prepare`
 - `POST /api/market/runs/:run_id/start`
 - `GET /api/market/runs/:run_id/status`
 - `GET /api/market/runs/:run_id/results`
 - `POST /api/market/runs/:run_id/chat`
+- `GET /api/market/runs/:run_id/timeline`
+- `GET /api/market/runs/:run_id/agents/:agent_id`
 
 ### 文件上传
 
@@ -199,7 +221,7 @@ npm run dev
 
 ```bash
 cd backend
-uv run pytest tests/test_market_simulation.py
+uv run pytest tests
 ```
 
 前端构建检查：

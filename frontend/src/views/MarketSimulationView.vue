@@ -35,7 +35,7 @@
     <section class="chart-grid">
       <MarketLineChart title="Price Path" :points="liveSeries" metric-key="price" color="#0f766e" />
       <MarketLineChart title="Crowd Sentiment" :points="liveSeries" metric-key="market_sentiment" color="#ea580c" />
-      <MarketLineChart title="Xueqiu Buzz" :points="liveSeries" metric-key="xueqiu_buzz" color="#b45309" />
+      <MarketLineChart title="社交热度（模拟）" :points="liveSeries" metric-key="xueqiu_buzz" color="#b45309" />
       <MarketLineChart title="Volume" :points="liveSeries" metric-key="volume" color="#1d4ed8" />
     </section>
 
@@ -81,7 +81,7 @@ const pollTimer = ref(null)
 
 const status = computed(() => run.value?.simulation_summary || {})
 const liveSeries = computed(() => status.value.live_series || [])
-const totalTicks = computed(() => (run.value?.scenario?.horizon_days || 3) * 48)
+const totalTicks = computed(() => (run.value?.scenario?.horizon_days || 3) * (run.value?.world_summary?.ticks_per_day || (run.value?.scenario?.market === 'us_equity' ? 78 : 48)))
 
 const loadRun = async () => {
   const response = await getMarketRun(runId)
